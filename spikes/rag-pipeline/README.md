@@ -61,6 +61,15 @@ npm run test        # vitest run
 
 These are wired into the root `just check` gate (see the root `justfile`).
 
+## Deviations from the plan
+
+Installed dependency versions drifted from the plan's pins beyond a patch bump:
+
+- `vitest ^3.2.4` (plan pinned `^2.1.0`) — vitest 3.x is required for compatibility with vite 6.
+- `@electric-sql/pglite ^0.5.4` (plan pinned `^0.2.0`) and `@huggingface/transformers ^3.8.1` (plan
+  pinned `^3.3.0`) — both installed at the newer version available at implementation time; no known
+  behavioral incompatibility was hit.
+
 ## Known limitations (by design, see spec "Out of scope")
 
 - Gemma-4-E2B local generation is not implemented (D2) — dev-cloud is primary; local SmolLM2-360M

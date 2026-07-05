@@ -135,6 +135,8 @@ export function App() {
               docId: result.documentId,
               text: result.text,
               charLength: result.charLength,
+              title: result.title,
+              sourceKind: result.sourceKind,
             });
           } else if (kind === "ingest") {
             const result = pipelineEvent.result as IngestResult;
