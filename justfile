@@ -1,8 +1,11 @@
 # AAFNO quality gate.
 # `just check` is the single stable gate used by AGENTS.md, CI, and reviewers.
 #
-# The application has not been scaffolded yet. Until React/Vite is added, these recipes perform
-# lightweight repository/documentation checks and print the commands they should become.
+# The production app has not been scaffolded yet (Phase 1). The Phase 0 POC spike under
+# spikes/rag-pipeline/ is the first package.json in the repo; format/lint/typecheck/test delegate
+# to its npm scripts. Run `npm install` in spikes/rag-pipeline/ before `just check`.
+
+spike_dir := "spikes/rag-pipeline"
 
 default:
     @just --list
@@ -14,24 +17,18 @@ check: docs format lint typecheck test
 docs:
     @echo "docs: verify PROJECT_ANALYSIS.md, README.md, specs/, plans/, and adr/ stay in sync"
 
-# Format code. After app scaffold, use: npm run format
+# Format code.
 format:
-    @echo "format: no-op until the React/Vite app is scaffolded"
+    cd {{spike_dir}} && npm run format
 
-# Lint code. After app scaffold, use: npm run lint
+# Lint code.
 lint:
-    @echo "lint: no-op until the React/Vite app is scaffolded"
+    cd {{spike_dir}} && npm run lint
 
-# Type-check code. After app scaffold, use: npm run typecheck
+# Type-check code.
 typecheck:
-    @echo "typecheck: no-op until the React/Vite app is scaffolded"
+    cd {{spike_dir}} && npm run typecheck
 
-# Run tests. After app scaffold, use: npm test
+# Run tests.
 test:
-    @echo "test: no-op until the React/Vite app is scaffolded"
-
-# Expected future app commands once package.json exists:
-#   format:     npm run format
-#   lint:       npm run lint
-#   typecheck:  npm run typecheck
-#   test:       npm test
+    cd {{spike_dir}} && npm run test
