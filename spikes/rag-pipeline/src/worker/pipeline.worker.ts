@@ -128,29 +128,6 @@ async function handleInit(jobId: string): Promise<void> {
   post({ type: "result", jobId, result });
 }
 
-async function handleRestore(jobId: string): Promise<void> {
-  post({ type: "status", jobId, status: "running" });
-  const capabilities = await detectCapabilities();
-  const modelStopwatch = new Stopwatch();
-  const model = await getEmbedModel(jobId);
-  const loadMs = modelStopwatch.elapsedMs();
-  const sawDownload = (model as EmbedModelHandle & { __sawDownload?: boolean }).__sawDownload ?? false;
-  const db = await getDb();
-  const restored = await restoreState(db);
-  const result: InitResult = {
-    webgpuAvailable: capabilities.webgpu.available,
-    opfsAvailable: capabilities.opfs,
-    indexedDbAvailable: capabilities.indexedDb,
-    restoredDocumentId: restored.documentId,
-    restoredChunkCount: restored.chunkCount,
-    modelLoadMs: loadMs,
-    modelLoadKind: embedModelWasAlreadyLoaded ? "already-loaded" : sawDownload ? "cold" : "warm",
-    modelDevice: model.device,
-  };
-  post({ type: "status", jobId, status: "complete" });
-  post({ type: "result", jobId, result });
-}
-
 async function resolveSourceBytes(
   source: DocumentSource,
 ): Promise<{ bytes: Uint8Array; title: string; byteSize: number; sourceKind: "bundled" | "uploaded" }> {
@@ -204,7 +181,14 @@ async function handleParse(jobId: string, source: DocumentSource): Promise<void>
   }
 }
 
-async function handleIngest(jobId: string, docId: string, text: string, charLength: number): Promise<void> {
+async function handleIngest(
+  jobId: string,
+  docId: string,
+  text: string,
+  charLength: number,
+  title: string,
+  sourceKind: "bundled" | "uploaded",
+): Promise<void> {
   post({ type: "status", jobId, status: "running" });
 
   post({ type: "progress", jobId, stage: "chunk", note: "Chunking locally (chonkie-ts RecursiveChunker)" });
@@ -229,8 +213,8 @@ async function handleIngest(jobId: string, docId: string, text: string, charLeng
   const storeStopwatch = new Stopwatch();
   await insertDocument(db, {
     id: docId,
-    title: docId,
-    sourceKind: "uploaded",
+    title,
+    sourceKind,
     byteSize: null,
     charLength,
     embedModel: EMBEDDING_MODEL_ID,
@@ -324,13 +308,23 @@ ctx.addEventListener("message", (event: MessageEvent<PipelineRequest>) => {
           await handleInit(request.jobId);
           break;
         case "restore":
-          await handleRestore(request.jobId);
+          // `restore` reopens the same persisted DB/model state as `init` (App.tsx's `init` call
+          // already restores on reload) — no distinct behavior, so it delegates rather than
+          // duplicating handleInit's body.
+          await handleInit(request.jobId);
           break;
         case "parse":
           await handleParse(request.jobId, request.source);
           break;
         case "ingest":
-          await handleIngest(request.jobId, request.docId, request.text, request.charLength);
+          await handleIngest(
+            request.jobId,
+            request.docId,
+            request.text,
+            request.charLength,
+            request.title,
+            request.sourceKind,
+          );
           break;
         case "retrieve":
           await handleRetrieve(request.jobId, request.question, request.k);

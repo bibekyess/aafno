@@ -74,7 +74,15 @@ export type DocumentSource = { kind: "bundled" } | { kind: "file"; bytes: ArrayB
 export type PipelineRequest =
   | { type: "init"; jobId: string }
   | { type: "parse"; jobId: string; source: DocumentSource }
-  | { type: "ingest"; jobId: string; docId: string; text: string; charLength: number }
+  | {
+      type: "ingest";
+      jobId: string;
+      docId: string;
+      text: string;
+      charLength: number;
+      title: string;
+      sourceKind: "bundled" | "uploaded";
+    }
   | { type: "retrieve"; jobId: string; question: string; k: number }
   | { type: "restore"; jobId: string }
   | { type: "generateLocal"; jobId: string; question: string; contexts: RetrievedChunk[] }
