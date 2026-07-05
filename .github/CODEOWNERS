@@ -1,0 +1,12 @@
+# CODEOWNERS — fill in your team or individuals as owners.
+# Format: <path pattern>  <@owner or @org/team>
+# See: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owner for all files (replace with your org/team handle):
+# * @your-org/your-team
+
+# Pipeline agents and hooks (typically owned by the platform/tooling team):
+# .claude/ @your-org/platform
+
+# Architecture decisions (typically require broader review):
+# adr/ @your-org/architects
