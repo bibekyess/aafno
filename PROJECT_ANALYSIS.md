@@ -24,7 +24,7 @@ and implementation of AAFNO.
 8. [Consolidated Phased Plan](#8-consolidated-phased-plan)
 9. [Privacy Console Spec](#9-privacy-console-spec)
 10. [Engineering Practices](#10-engineering-practices)
-11. [Recommended Living Documents & Immediate Next Steps](#11-recommended-living-documents--immediate-next-steps)
+11. [Repository Artifact Lanes & Immediate Next Steps](#11-repository-artifact-lanes--immediate-next-steps)
 12. [Suggested Requirement Themes](#12-suggested-requirement-themes)
 
 ---
@@ -247,7 +247,8 @@ persistence, web workers, and Tiptap editor integration. This must be validated 
 technical spike (Phase 0) before building the polished app shell.
 
 ### Initial risk register
-(Track and update in `RISK_REGISTER.md` — see §11.)
+(Track project-wide risks here, feature-specific risks in `specs/` and `plans/`, and durable
+architecture tradeoffs in `adr/` — see §11.)
 
 - WebGPU browser/device compatibility
 - Large model download friction
@@ -488,8 +489,11 @@ src/
     shell/
 
   components/
-    ui/
-    layout/
+    atoms/
+    molecules/
+    organisms/
+    templates/
+    pages/
 
   features/
     documents/
@@ -518,10 +522,36 @@ src/
 
 Guidelines:
 - Keep feature-specific UI and logic close together.
-- Put shared primitives in `components/`.
+- Use Atomic Design for shared frontend composition:
+  - `components/atoms/` for indivisible primitives such as buttons, inputs, icons, badges,
+    progress bars, labels, separators, and tooltips.
+  - `components/molecules/` for small composed controls such as search boxes, file upload rows,
+    citation chips, model status rows, source selectors, and inline command bars.
+  - `components/organisms/` for larger reusable interface sections such as the document sidebar,
+    model manager panel, Privacy Console, Q&A panel, editor toolbar, upload queue, and source
+    viewer.
+  - `components/templates/` for route-level layouts and screen skeletons such as workspace
+    layout, onboarding/model-download layout, document-review layout, and split editor/Q&A
+    layout.
+  - `components/pages/` for route-bound page compositions that assemble templates and feature
+    modules. Pages should stay thin and avoid owning core business logic.
 - Put browser APIs and infrastructure in `lib/`.
 - Keep worker contracts typed and documented.
 - Avoid global state unless the need is clear.
+
+Atomic Design should support maintainability, not create busywork. If a component is used only
+inside one feature and is unlikely to be shared, keep it inside that feature folder first. Promote
+it to `components/` only when it becomes a genuine shared design element.
+
+Suggested feature-local pattern:
+
+```text
+src/features/privacy-console/
+  components/
+  hooks/
+  state/
+  types.ts
+```
 
 ### Worker architecture guidelines
 
@@ -620,28 +650,33 @@ A feature is not done until:
 - It has appropriate tests or a documented reason tests were deferred.
 - It updates docs or decisions if behavior changed.
 
-### Decision-log format
+### ADR format
 
-Use a lightweight decision log (`DECISIONS.md`) for meaningful choices. Each decision should
-include: Date, Status, Decision, Context, Alternatives considered, Tradeoffs, Owner.
+Use the existing `adr/` lane for meaningful architecture decisions. Each ADR should follow
+`adr/TEMPLATE.md` and include frontmatter, context, decision, alternatives considered, and
+consequences.
 
 ```md
-## 2026-07-05: Use PGlite + pgvector for local vector storage
+---
+title: Use PGlite + pgvector for local vector storage
+date: 2026-07-06
+status: Proposed
+---
 
-Status: Proposed
+# 2026-07-06 — Use PGlite + pgvector for local vector storage
 
-Decision:
-Use PGlite with pgvector for local document metadata, chunks, full-text search, and vector search.
-
-Context:
+## Context
 AAFNO needs durable local storage and future hybrid search.
 
-Alternatives:
+## Decision
+Use PGlite with pgvector for local document metadata, chunks, full-text search, and vector search.
+
+## Alternatives considered
 - IndexedDB only
 - In-memory vector search
 - LanceDB WASM
 
-Tradeoffs:
+## Consequences
 More complexity early, but stronger long-term architecture.
 ```
 
@@ -678,14 +713,23 @@ The user wants to see, download, switch, and delete local AI models.
 - User can understand why a model failed to load.
 ```
 
-### Risk register format
+### Risk tracking format
 
-Maintain `RISK_REGISTER.md`. Each risk should include: Risk, Impact, Likelihood, Mitigation,
-Owner, Status. Seed it with the initial risks listed in §7.
+For this template-based workflow, track risks in the artifact where they affect the work:
+
+- Product and project-wide risks stay summarized in §7 of this document.
+- Feature-specific risks go in `specs/<date>-<slug>.md` under edge cases, non-functional
+  requirements, or assumptions.
+- Implementation sequencing risks go in `plans/<date>-<slug>.md` under Risk & Sequencing.
+- Durable architectural risks and tradeoffs go in `adr/`.
+
+If risk tracking grows large enough, create `docs/risk-register.md`; do not add a separate root-level risk register until the project needs it.
 
 ### Roadmap discipline
 
-Maintain `ROADMAP.md`; each phase should include acceptance criteria, e.g.:
+For this repository style, keep the high-level roadmap in §8 of this document and turn each
+phase or major feature into a dated spec in `specs/`. Each spec should include acceptance
+criteria, e.g.:
 
 ```md
 ## Phase 1 Acceptance Criteria
@@ -711,20 +755,39 @@ If those are handled carefully, the rest of the product can grow with confidence
 
 ---
 
-## 11. Recommended Living Documents & Immediate Next Steps
+## 11. Repository Artifact Lanes & Immediate Next Steps
 
-### Living documents to maintain
+### Repository artifact lanes
 
-Core set:
+The repository already uses a template-based agent workflow. Keep that structure and treat
+`PROJECT_ANALYSIS.md` as the canonical product and architecture reference, not as a replacement
+for every workflow artifact.
+
+Recommended roles:
+
 ```text
-PROJECT_ANALYSIS.md   (this file — replaces PROJECT_BRIEF.md, AAFNO_PRODUCT_REVIEW.md, DEVELOPMENT_GUIDE.md)
-PRODUCT_PRINCIPLES.md
-ROADMAP.md
-RISK_REGISTER.md
-DECISIONS.md
+README.md             Project entry point for humans and agents.
+AGENTS.md             Always-apply invariants for coding agents.
+PROJECT_ANALYSIS.md   Canonical AAFNO product, architecture, and engineering reference.
+specs/                Requirements artifacts for Tier 2 work.
+plans/                Implementation plans derived from ratified specs.
+adr/                  Durable architecture decisions.
+justfile              Single quality-gate contract through `just check`.
 ```
 
-Later, implementation-specific docs under `docs/`:
+This is a better fit for the existing template than maintaining separate root files such as
+`PRODUCT_PRINCIPLES.md`, `ROADMAP.md`, `RISK_REGISTER.md`, and `DECISIONS.md` by default.
+Their content should be expressed through the template lanes:
+
+- Product principles and long-lived product constraints live in `PROJECT_ANALYSIS.md`.
+- Roadmap items become dated feature specs in `specs/`.
+- Implementation sequencing lives in `plans/`.
+- Durable technical choices live in `adr/`.
+- Risks are captured in relevant specs/plans and promoted into ADRs when they affect architecture.
+
+If the project later needs standalone durable docs, put them under `docs/` rather than adding more
+root-level files:
+
 ```text
 docs/
   architecture.md
@@ -733,19 +796,22 @@ docs/
   local-storage.md
   worker-contracts.md
   testing.md
+  risk-register.md
 ```
 
 ### Suggested immediate next steps
 
-1. Create `PRODUCT_PRINCIPLES.md` (seed from §6).
-2. Create `ROADMAP.md` with phase acceptance criteria (seed from §8).
-3. Create `RISK_REGISTER.md` (seed from §7).
-4. Create `DECISIONS.md`.
+1. Update `README.md` so it describes AAFNO first and the agent template second.
+2. Create the first Phase 0 spec in `specs/`, using the existing spec template.
+3. Create the matching Phase 0 implementation plan in `plans/` after the spec is ratified.
+4. Add ADRs in `adr/` for accepted architectural choices such as in-browser-only inference,
+   PGlite + pgvector, Atomic Design, and the Privacy Console/network wrapper pattern.
 5. ~~Clean encoding issues in `PROJECT_BRIEF.md`~~ — carried forward: verify no encoding
    artifacts were introduced/retained in this consolidated document (`PROJECT_BRIEF.md` had a
    known encoding-cleanup item pending at the time of consolidation).
 6. Start Phase 0 as isolated spike code (see `spikes/` layout in §10).
-7. Record measurements from the spike before committing to the full app shell.
+7. Record measurements from the spike in the relevant spec/plan before committing to the full app
+   shell.
 
 ---
 
@@ -784,12 +850,11 @@ divergences were reconciled above:
   - **Model naming:** all sources agree on **Gemma-4-E2B** and **SmolLM2-360M**; no naming
   conflict was found between sources — flagged here only because the task description called out
   model naming as a possible divergence to check for.
-- **Document structure:** `DEVELOPMENT_GUIDE.md` proposes a slightly more detailed
-  `src/` layout (with `components/ui`, `components/layout`, `lib/telemetry`) than the simpler
-  spike-oriented layout it also proposes earlier in the same file (`app/ features/ workers/ lib/`).
-  Both are preserved as-is in §10 as two distinct, sequential structures: the minimal spike-phase
-  layout and the later full-application-scaffold layout — they are not in conflict, just
-  different points in time (Phase 0 spike vs. post-Phase-0 app).
+- **Document structure:** `DEVELOPMENT_GUIDE.md` originally proposed a simpler shared
+  `components/ui` and `components/layout` structure. This consolidated version adapts that
+  guidance to the user's preferred Atomic Design methodology (`atoms`, `molecules`, `organisms`,
+  `templates`, `pages`) while preserving the same intent: keep shared UI primitives separate from
+  feature-owned product logic.
 
 No information was dropped from any of the three source files. All risks, metrics, checklists,
 type definitions, templates, and phase details from `PROJECT_BRIEF.md`, `AAFNO_PRODUCT_REVIEW.md`,
