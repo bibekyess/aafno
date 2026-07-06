@@ -1,0 +1,4 @@
+# Normalize all text files to LF in the repo and on checkout, overriding the Windows
+# core.autocrlf=true default. Matches Prettier's LF default so the two stop disagreeing
+# (which produced "LF will be replaced by CRLF" warnings on every git operation).
+* text=auto eol=lf
