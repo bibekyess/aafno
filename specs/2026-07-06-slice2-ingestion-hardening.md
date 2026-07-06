@@ -1,7 +1,7 @@
 ---
 title: Phase 0 POC — Slice 2 (ingestion hardening + dev ergonomics)
 date: 2026-07-06
-status: Ratified        # Draft | Ratified | Delivered
+status: Delivered        # Draft | Ratified | Delivered
 ---
 
 # 2026-07-06 — Phase 0 POC — Slice 2 (ingestion hardening + dev ergonomics)
