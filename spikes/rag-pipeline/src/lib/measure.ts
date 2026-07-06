@@ -143,6 +143,7 @@ _Numbers require a real WebGPU browser run — not producible in CI/headless (NF
 // --- localStorage-backed measurement store (browser-only; guarded for Node/test environments) ---
 
 const COLD_LOAD_KEY_PREFIX = "aafno:measure:cold-load-ms:";
+const WARM_LOAD_KEY_PREFIX = "aafno:measure:warm-load-ms:";
 const HAD_CORPUS_KEY = "aafno:measure:had-corpus";
 
 function getStorage(): Storage | null {
@@ -160,6 +161,14 @@ export const measurementStore = {
   },
   getColdLoadMs(modelId: string): number | null {
     const raw = getStorage()?.getItem(COLD_LOAD_KEY_PREFIX + modelId) ?? null;
+    return raw === null ? null : Number(raw);
+  },
+  /** Persist a warm-load ms measurement, keyed by model id, so it survives later navigations. */
+  recordWarmLoadMs(modelId: string, ms: number): void {
+    getStorage()?.setItem(WARM_LOAD_KEY_PREFIX + modelId, String(ms));
+  },
+  getWarmLoadMs(modelId: string): number | null {
+    const raw = getStorage()?.getItem(WARM_LOAD_KEY_PREFIX + modelId) ?? null;
     return raw === null ? null : Number(raw);
   },
   /** Mark that a corpus was successfully ingested at least once (drives the self-check's `fail` branch). */

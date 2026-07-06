@@ -7,7 +7,11 @@
  * original bytes, not parsed text (FR-1) — filename-independent, byte-exact (FR-4, EC-7).
  */
 export async function computeContentHash(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  // @types/node's global Uint8Array augmentation widens the ambient `Uint8Array` type to
+  // `Uint8Array<ArrayBufferLike>`, which DOM's `BufferSource` (expects `ArrayBuffer`) rejects —
+  // a type-only mismatch, not a runtime one. Cast to unblock typecheck (pre-existing gate break,
+  // unrelated to this change — surfaced only now that `npm ci` actually runs before `tsc`).
+  const digest = await crypto.subtle.digest("SHA-256", bytes as BufferSource);
   return Array.from(new Uint8Array(digest))
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");

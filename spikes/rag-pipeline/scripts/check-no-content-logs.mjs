@@ -40,7 +40,10 @@ function main() {
   // Fresh build every run so this check always reflects current source, never a stale dist/.
   rmSync(distDir, { recursive: true, force: true });
   console.log("[check-no-content-logs] Running production build (vite build)...");
-  execFileSync(join(root, "node_modules", ".bin", "vite"), ["build"], { cwd: root, stdio: "inherit" });
+  // `shell: true` so this resolves node_modules/.bin/vite on Windows too (no bare-extension exec
+  // there — only vite.cmd/vite.ps1 shims), not just POSIX CI runners. Args are fixed, not
+  // user input, so shell interpolation is not a concern here.
+  execFileSync(join(root, "node_modules", ".bin", "vite"), ["build"], { cwd: root, stdio: "inherit", shell: true });
 
   const jsFiles = listJsAssets(distDir);
   if (jsFiles.length === 0) {

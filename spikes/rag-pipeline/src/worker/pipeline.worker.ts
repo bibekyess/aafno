@@ -20,6 +20,7 @@ import type {
   DocumentSource,
   IngestResult,
   InitResult,
+  ModelLoadKind,
   ParseResult,
   PipelineEvent,
   PipelineRequest,
@@ -75,6 +76,10 @@ function getDb(): Promise<{ db: PGlite; wasReset: boolean }> {
 
 let embedModelPromise: Promise<EmbedModelHandle> | null = null;
 let embedModelWasAlreadyLoaded = false;
+// Frozen once the first init/restore in this worker session reports its load kind, so a later
+// getEmbedModel() call (e.g. from an ingest after the initial load) that flips
+// embedModelWasAlreadyLoaded to true can't retroactively overwrite the genuine cold/warm reading.
+let firstModelLoadKind: ModelLoadKind | null = null;
 
 function getEmbedModel(jobId: string): Promise<EmbedModelHandle> {
   if (!embedModelPromise) {
@@ -136,15 +141,20 @@ async function handleInit(jobId: string): Promise<void> {
   const model = await getEmbedModel(jobId);
   const loadMs = modelStopwatch.elapsedMs();
   const sawDownload = (model as EmbedModelHandle & { __sawDownload?: boolean }).__sawDownload ?? false;
-  const modelLoadKind = embedModelWasAlreadyLoaded ? "already-loaded" : sawDownload ? "cold" : "warm";
+  const computedLoadKind: ModelLoadKind = embedModelWasAlreadyLoaded ? "already-loaded" : sawDownload ? "cold" : "warm";
+  // Freeze the FIRST reported kind for this worker session — a later getEmbedModel() call (e.g.
+  // from an ingest) flips embedModelWasAlreadyLoaded permanently, which must not retroactively
+  // turn a genuine cold/warm reading into "already-loaded" on a subsequent init/restore.
+  const modelLoadKind = firstModelLoadKind ?? computedLoadKind;
+  if (firstModelLoadKind === null) firstModelLoadKind = modelLoadKind;
   post({
     type: "progress",
     jobId,
     stage: "init",
     note: `Embedding model ready on ${model.device} in ${loadMs.toFixed(0)}ms (${
-      embedModelWasAlreadyLoaded
+      modelLoadKind === "already-loaded"
         ? "already loaded"
-        : sawDownload
+        : modelLoadKind === "cold"
           ? "cold-load, downloaded weights"
           : "warm-load, served from cache"
     })`,

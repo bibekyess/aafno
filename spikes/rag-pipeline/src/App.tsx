@@ -149,8 +149,10 @@ export function App() {
             if (result.modelLoadKind === "cold") {
               setColdLoadMs(result.modelLoadMs);
               measurementStore.recordColdLoadMs(MEASUREMENT_MODEL_KEY, result.modelLoadMs);
+              setWarmLoadMs(measurementStore.getWarmLoadMs(MEASUREMENT_MODEL_KEY));
             } else if (result.modelLoadKind === "warm") {
               setWarmLoadMs(result.modelLoadMs);
+              measurementStore.recordWarmLoadMs(MEASUREMENT_MODEL_KEY, result.modelLoadMs);
               setColdLoadMs(measurementStore.getColdLoadMs(MEASUREMENT_MODEL_KEY));
             }
             setRestoredChunkCount(result.restoredChunkCount);
