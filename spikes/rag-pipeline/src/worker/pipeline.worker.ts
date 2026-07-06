@@ -3,12 +3,20 @@
 // This worker makes NO content-bearing network requests — its only network activity is the
 // transformers.js model-weight download, surfaced as `network` events (purpose "model_download")
 // so the main thread's network log stays complete (plan "Data / control flow", AC-2).
+//
+// Slice 2 (A1/A2, plan step 5): hashes bytes before parsing and short-circuits a duplicate upload
+// (FR-1..FR-4); adds listDocuments/deleteDocument; restores the whole corpus on init (FR-9);
+// surfaces a schema-reset notice (D5/EC-1). Pipeline I/O is traced via `lib/log.ts` (A3) — metadata
+// through `debug`, document/prompt content only through the DEV-gated `content()` channel (FR-16).
 
 /// <reference lib="webworker" />
 
 import { detectCapabilities } from "../lib/capabilities";
+import { computeContentHash } from "../lib/hash";
+import { createLogger } from "../lib/log";
 import { Stopwatch, embeddingThroughput } from "../lib/measure";
 import type {
+  DedupOutcome,
   DocumentSource,
   IngestResult,
   InitResult,
@@ -20,15 +28,33 @@ import type {
 } from "../lib/messages";
 import { chunkText } from "./chunk";
 import { EMBEDDING_MODEL_ID, loadEmbeddingModel, type EmbedModelHandle } from "./embed";
-import { attemptHnswIndex, insertChunks, insertDocument, openDb, restoreState, retrieveTopK } from "./db";
+import {
+  attemptHnswIndex,
+  deleteDocument,
+  findDocumentByContentHash,
+  insertChunks,
+  insertDocument,
+  listDocuments,
+  openDb,
+  restoreAllDocuments,
+  retrieveTopK,
+} from "./db";
 import { NoExtractableTextError, parsePdf } from "./parse";
 import type { PGlite } from "@electric-sql/pglite";
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
+// Same store name as slice 1 — the version gate below (`ensureSchemaVersion`) depends on reopening
+// the SAME persisted store to detect and reset a stale pre-slice-2 schema in place (D5/EC-1),
+// rather than orphaning the old data under a new name.
 const DATA_DIR = "idb://aafno-slice1";
 const BUNDLED_SAMPLE_URL = "/sample/sample.pdf";
 const BUNDLED_SAMPLE_TITLE = "AAFNO Phase 0 sample document";
+
+const parseLog = createLogger("parse");
+const dbLog = createLogger("db");
+const retrieveLog = createLogger("retrieve");
+const generateLog = createLogger("generate");
 
 function post(event: PipelineEvent): void {
   ctx.postMessage(event);
@@ -41,8 +67,8 @@ function fail(jobId: string, stage: PipelineStage, error: unknown): void {
 
 // --- Lazily-initialized, worker-lifetime singletons ---
 
-let dbPromise: Promise<PGlite> | null = null;
-function getDb(): Promise<PGlite> {
+let dbPromise: Promise<{ db: PGlite; wasReset: boolean }> | null = null;
+function getDb(): Promise<{ db: PGlite; wasReset: boolean }> {
   if (!dbPromise) dbPromise = openDb(DATA_DIR);
   return dbPromise;
 }
@@ -110,6 +136,7 @@ async function handleInit(jobId: string): Promise<void> {
   const model = await getEmbedModel(jobId);
   const loadMs = modelStopwatch.elapsedMs();
   const sawDownload = (model as EmbedModelHandle & { __sawDownload?: boolean }).__sawDownload ?? false;
+  const modelLoadKind = embedModelWasAlreadyLoaded ? "already-loaded" : sawDownload ? "cold" : "warm";
   post({
     type: "progress",
     jobId,
@@ -124,26 +151,34 @@ async function handleInit(jobId: string): Promise<void> {
   });
 
   post({ type: "progress", jobId, stage: "init", note: "Opening persisted store" });
-  const db = await getDb();
-  const restored = await restoreState(db);
+  const { db, wasReset } = await getDb();
+  if (wasReset) {
+    dbLog.warn("Local index was reset — schema version stale (D5/EC-1)");
+  }
+  const restored = await restoreAllDocuments(db);
 
   const result: InitResult = {
     webgpuAvailable: capabilities.webgpu.available,
     opfsAvailable: capabilities.opfs,
     indexedDbAvailable: capabilities.indexedDb,
-    restoredDocumentId: restored.documentId,
-    restoredChunkCount: restored.chunkCount,
+    restoredDocuments: restored.documents,
+    restoredChunkCount: restored.totalChunkCount,
+    schemaReset: wasReset,
     modelLoadMs: loadMs,
-    modelLoadKind: embedModelWasAlreadyLoaded ? "already-loaded" : sawDownload ? "cold" : "warm",
+    modelLoadKind,
     modelDevice: model.device,
   };
+  dbLog.debug(`Restored ${restored.documents.length} document(s), ${restored.totalChunkCount} chunk(s)`);
   post({ type: "status", jobId, status: "complete" });
   post({ type: "result", jobId, result });
 }
 
-async function resolveSourceBytes(
-  source: DocumentSource,
-): Promise<{ bytes: Uint8Array; title: string; byteSize: number; sourceKind: "bundled" | "uploaded" }> {
+async function resolveSourceBytes(source: DocumentSource): Promise<{
+  bytes: Uint8Array;
+  title: string;
+  byteSize: number;
+  sourceKind: "bundled" | "uploaded";
+}> {
   if (source.kind === "bundled") {
     const response = await fetch(BUNDLED_SAMPLE_URL);
     // The bundled sample is an `app_asset` fetch (served by the Vite dev server itself, not a
@@ -170,6 +205,37 @@ async function handleParse(jobId: string, source: DocumentSource): Promise<void>
   post({ type: "progress", jobId, stage: "parse", note: "Reading document bytes" });
   const { bytes, title, byteSize, sourceKind } = await resolveSourceBytes(source);
 
+  // EC-6: a zero-byte input is surfaced as a clear error rather than silently indexed.
+  if (byteSize === 0) {
+    fail(jobId, "parse", new Error("The selected file is empty (0 bytes) and cannot be indexed."));
+    return;
+  }
+
+  parseLog.debug(`Read ${title} (${byteSize} bytes, ${sourceKind})`); // FR-14 (metadata only)
+  const contentHash = await computeContentHash(bytes);
+
+  const { db } = await getDb();
+  const existing = await findDocumentByContentHash(db, contentHash);
+  if (existing) {
+    // FR-3: warn-and-skip BEFORE parse/chunk/embed/store — the real dedup decision point.
+    parseLog.info(`Duplicate upload detected — already indexed as "${existing.title}" (${existing.id})`);
+    const dedup: DedupOutcome = { skipped: true, existingDocumentId: existing.id, existingTitle: existing.title };
+    const result: ParseResult = {
+      documentId: existing.id,
+      text: "",
+      charLength: 0,
+      title: existing.title,
+      sourceKind,
+      byteSize,
+      contentHash,
+      dedup,
+    };
+    post({ type: "progress", jobId, stage: "parse", note: `This file is already indexed as "${existing.title}"` });
+    post({ type: "status", jobId, status: "complete" });
+    post({ type: "result", jobId, result });
+    return;
+  }
+
   post({ type: "progress", jobId, stage: "parse", note: "Parsing PDF locally (liteparse-wasm)" });
   try {
     const parsed = await parsePdf(bytes);
@@ -181,7 +247,11 @@ async function handleParse(jobId: string, source: DocumentSource): Promise<void>
       title,
       sourceKind,
       byteSize,
+      contentHash,
+      dedup: { skipped: false },
     };
+    parseLog.debug(`Parsed locally: ${parsed.charLength} characters`);
+    parseLog.content(() => [parsed.text]); // FR-16 — parsed text, dev-only
     post({ type: "progress", jobId, stage: "parse", note: `Parsed locally: ${parsed.charLength} characters` });
     post({ type: "status", jobId, status: "complete" });
     post({ type: "result", jobId, result });
@@ -201,6 +271,8 @@ async function handleIngest(
   charLength: number,
   title: string,
   sourceKind: "bundled" | "uploaded",
+  contentHash: string,
+  byteSize: number | null,
 ): Promise<void> {
   post({ type: "status", jobId, status: "running" });
 
@@ -223,6 +295,9 @@ async function handleIngest(
   );
   const embedMs = embedStopwatch.elapsedMs();
   const throughput = embeddingThroughput(chunks.length, charLength, embedMs);
+  createLogger("embed").debug(
+    `Embedded ${chunks.length} chunks (dim=${model.dimension}) in ${embedMs.toFixed(0)}ms on ${model.device}`,
+  ); // FR-14 (metadata only)
   post({
     type: "progress",
     jobId,
@@ -231,16 +306,17 @@ async function handleIngest(
   });
 
   post({ type: "progress", jobId, stage: "store", note: "Storing chunks + vectors locally (PGlite + pgvector)" });
-  const db = await getDb();
+  const { db } = await getDb();
   const storeStopwatch = new Stopwatch();
   await insertDocument(db, {
     id: docId,
     title,
     sourceKind,
-    byteSize: null,
+    byteSize,
     charLength,
     embedModel: EMBEDDING_MODEL_ID,
     embedDim: model.dimension,
+    contentHash,
   });
   await insertChunks(
     db,
@@ -268,6 +344,7 @@ async function handleIngest(
     storeMs,
     chunksPerSecond: throughput.chunksPerSecond,
     charsPerSecond: throughput.charsPerSecond,
+    dedup: { skipped: false },
   };
   post({ type: "status", jobId, status: "complete" });
   post({ type: "result", jobId, result });
@@ -280,10 +357,17 @@ async function handleRetrieve(jobId: string, question: string, k: number): Promi
   const [questionEmbedding] = await model.embed([question]);
 
   post({ type: "progress", jobId, stage: "retrieve", note: `Retrieving top-${k} passages locally` });
-  const db = await getDb();
+  const { db } = await getDb();
   const retrieveStopwatch = new Stopwatch();
   const { chunks, belowRelevanceThreshold } = await retrieveTopK(db, questionEmbedding, k);
   const retrievalMs = retrieveStopwatch.elapsedMs();
+
+  retrieveLog.debug(
+    `Retrieved ${chunks.length} chunk(s) in ${retrievalMs.toFixed(0)}ms, scores=[${chunks
+      .map((chunk) => chunk.similarity.toFixed(3))
+      .join(", ")}]`,
+  ); // FR-14 — scores are metadata, not content
+  retrieveLog.content(() => [question, ...chunks.map((chunk) => chunk.text)]); // FR-16 — query + passage bodies
 
   post({
     type: "progress",
@@ -299,11 +383,29 @@ async function handleRetrieve(jobId: string, question: string, k: number): Promi
   post({ type: "result", jobId, result });
 }
 
+async function handleListDocuments(jobId: string): Promise<void> {
+  post({ type: "status", jobId, status: "running" });
+  const { db } = await getDb();
+  const documents = await listDocuments(db);
+  post({ type: "status", jobId, status: "complete" });
+  post({ type: "result", jobId, result: { documents } });
+}
+
+async function handleDeleteDocument(jobId: string, documentId: string): Promise<void> {
+  post({ type: "status", jobId, status: "running" });
+  const { db } = await getDb();
+  const deletedChunkCount = await deleteDocument(db, documentId);
+  dbLog.info(`Deleted document ${documentId} (${deletedChunkCount} chunk(s) cascaded)`);
+  post({ type: "status", jobId, status: "complete" });
+  post({ type: "result", jobId, result: { documentId, deletedChunkCount } });
+}
+
 function handleGenerateLocal(jobId: string): void {
   // Stretch goal (D2): local SmolLM2-360M generation. Not implemented in slice 1 — the dev-cloud
   // path (lib/generate.ts, main thread) is the primary generation path. Reported as a clear
   // configuration/capability error rather than hanging (edge case: "no valid endpoint... report a
   // clear configuration error" — the analogous local case is "no local model available").
+  generateLog.warn("Local generation requested but not implemented (slice-1 stretch goal)");
   fail(
     jobId,
     "generate",
@@ -317,6 +419,8 @@ const REQUEST_STAGE: Record<PipelineRequest["type"], PipelineStage> = {
   parse: "parse",
   ingest: "store",
   retrieve: "retrieve",
+  listDocuments: "store",
+  deleteDocument: "store",
   generateLocal: "generate",
   cancel: "init",
 };
@@ -346,10 +450,18 @@ ctx.addEventListener("message", (event: MessageEvent<PipelineRequest>) => {
             request.charLength,
             request.title,
             request.sourceKind,
+            request.contentHash,
+            request.byteSize,
           );
           break;
         case "retrieve":
           await handleRetrieve(request.jobId, request.question, request.k);
+          break;
+        case "listDocuments":
+          await handleListDocuments(request.jobId);
+          break;
+        case "deleteDocument":
+          await handleDeleteDocument(request.jobId, request.documentId);
           break;
         case "generateLocal":
           handleGenerateLocal(request.jobId);

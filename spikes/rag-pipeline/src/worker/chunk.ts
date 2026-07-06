@@ -7,6 +7,9 @@
 // build-time import analysis (vite.config.ts + src/shims/chonkiejs-token-shim.ts).
 
 import { RecursiveChunker } from "@chonkiejs/core";
+import { createLogger } from "../lib/log";
+
+const log = createLogger("chunk");
 
 // Same model id as the embedding pipeline (worker/embed.ts) — token-accurate sizing against the
 // tokenizer that will actually encode these chunks.
@@ -36,8 +39,8 @@ function getChunker() {
       // Documented observation for §5 unknown #2: if the HuggingFace tokenizer integration is
       // unavailable in this environment, fall back to chonkie's built-in character tokenizer
       // (FR-3 explicitly allows a documented approximation when exact integration fails).
-      console.warn(
-        "[chunk] Falling back to character-based tokenizer — HuggingFace tokenizer integration " +
+      log.warn(
+        "Falling back to character-based tokenizer — HuggingFace tokenizer integration " +
           `unavailable (${error instanceof Error ? error.message : String(error)}).`,
       );
       chunkerPromise = null;
@@ -53,10 +56,13 @@ function getChunker() {
 export async function chunkText(text: string): Promise<TextChunk[]> {
   const chunker = await getChunker();
   const chunks = await chunker.chunk(text);
-  return chunks.map((chunk) => ({
+  const result = chunks.map((chunk) => ({
     text: chunk.text,
     tokenCount: chunk.tokenCount,
     charStart: chunk.startIndex,
     charEnd: chunk.endIndex,
   }));
+  log.debug(`Created ${result.length} chunks from ${text.length} characters`); // FR-14 (metadata only)
+  log.content(() => result.map((chunk) => chunk.text)); // FR-16 — chunk bodies, dev-only
+  return result;
 }
