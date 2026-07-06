@@ -1,8 +1,15 @@
 // PGlite + pgvector DDL (FR-5, spec "Data / Migration Notes"). Fresh DB, no migration — this is
 // the first schema. `embed_dim` records R2's confirmed dimension (768) for the embedding model
 // named in `embed_model`; `char_start`/`char_end` on `chunks` give source attribution (FR-5, AC-1).
+//
+// Slice 2 (plan step 1): `content_hash` is the dedup identity (FR-2) and `schema_meta` backs the
+// version gate that drops/recreates a stale slice-1 DB in place (D5/EC-1) — see `ensureSchemaVersion`
+// in `worker/db.ts`.
 
 export const EMBEDDING_DIM = 768;
+
+/** Bump when `SCHEMA_SQL` changes shape; `ensureSchemaVersion` resets the local DB below this. */
+export const SCHEMA_VERSION = 2;
 
 export const SCHEMA_SQL = `
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -15,7 +22,12 @@ CREATE TABLE IF NOT EXISTS documents (
   char_length  INTEGER NOT NULL,
   parsed_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   embed_model  TEXT NOT NULL,          -- 'onnx-community/embeddinggemma-300m-ONNX'
-  embed_dim    INTEGER NOT NULL        -- 768 (records R2's confirmed dimension)
+  embed_dim    INTEGER NOT NULL,       -- 768 (records R2's confirmed dimension)
+  content_hash TEXT UNIQUE             -- SHA-256 of raw file bytes (FR-2, dedup identity)
+);
+
+CREATE TABLE IF NOT EXISTS schema_meta (
+  version INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS chunks (
