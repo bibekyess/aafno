@@ -79,11 +79,22 @@ export async function ensureSchemaVersion(db: PGlite): Promise<boolean> {
   const hasSchemaMeta = await tableExists(db, "schema_meta");
   const hasContentHash = await columnExists(db, "documents", "content_hash");
   let currentVersion = 0;
+  let hasVersionRow = false;
   if (hasSchemaMeta) {
     const result = await db.query<{ version: number }>(
       "SELECT version FROM schema_meta ORDER BY version DESC LIMIT 1;",
     );
+    hasVersionRow = result.rows.length > 0;
     currentVersion = result.rows[0]?.version ?? 0;
+  }
+
+  // Brand-new profile: `openDb`'s `SCHEMA_SQL` just created `documents`/`schema_meta` together for
+  // the first time, so the shape is already current — there's just no version row yet because
+  // nothing ever wrote one. Seed it in place rather than falling through to `needsReset`, which
+  // would otherwise misreport a first-ever open as a drop-and-recreate (nothing was dropped).
+  if (hasSchemaMeta && hasContentHash && !hasVersionRow) {
+    await db.query("INSERT INTO schema_meta (version) VALUES ($1);", [SCHEMA_VERSION]);
+    return false;
   }
 
   const needsReset = !hasSchemaMeta || !hasContentHash || currentVersion < SCHEMA_VERSION;

@@ -378,6 +378,13 @@ describe(
       await db2.close();
     });
 
+    it("does NOT report a reset on a brand-new profile's very first open (nothing existed to reset)", async () => {
+      const dir = makeTempDir();
+      const { db, wasReset } = await openDb(dir);
+      expect(wasReset).toBe(false);
+      await db.close();
+    });
+
     it("resets a pre-existing slice-1-shaped DB (no content_hash, no schema_meta) on reopen (AC-9/EC-1)", async () => {
       const dir = makeTempDir();
 
