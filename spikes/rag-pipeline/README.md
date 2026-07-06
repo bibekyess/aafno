@@ -1,12 +1,15 @@
-# AAFNO Phase 0 POC — Slice 1: RAG pipeline spike
+# AAFNO Phase 0 POC — RAG pipeline spike (slices 1 + 2)
 
-End-to-end client-side RAG walking skeleton: one document → `liteparse-wasm` parse (local) →
+End-to-end client-side RAG walking skeleton: document(s) → `liteparse-wasm` parse (local) →
 `chonkie-ts`/`@chonkiejs/core` chunk (local) → `EmbeddingGemma` embed via `@huggingface/transformers`
-on WebGPU (local) → store chunks + vectors in PGlite + pgvector (persisted) → retrieve top-k →
-generate an answer via a dev-only OpenAI-compatible endpoint.
+on WebGPU (local) → store chunks + vectors in PGlite + pgvector (persisted, corpus-wide) →
+retrieve top-k across the whole corpus → generate an answer via a dev-only OpenAI-compatible
+endpoint. Slice 2 adds byte-hash dedup, a document list with delete, a dev-only leveled logger with
+a hard content-privacy gate, and measurement capture/export tooling.
 
-See `specs/2026-07-05-phase0-poc-slice1.md` (requirements) and
-`plans/2026-07-05-phase0-poc-slice1.md` (implementation plan) at the repo root.
+See `specs/2026-07-05-phase0-poc-slice1.md` + `specs/2026-07-06-slice2-ingestion-hardening.md`
+(requirements) and `plans/2026-07-05-phase0-poc-slice1.md` +
+`plans/2026-07-06-slice2-ingestion-hardening.md` (implementation plans) at the repo root.
 
 This is **spike code** (PROJECT_ANALYSIS.md §10 #5): typed, but not production-polished. It is not
 wired into any production app shell — there isn't one yet (Phase 1).
@@ -30,11 +33,19 @@ copy `.env.local.example` to `.env.local`, fill in a real OpenAI-compatible endp
 
 - **Capabilities** — WebGPU/OPFS/IndexedDB detection (FR-13, AC-9).
 - **Document** — load the bundled sample or upload a PDF; the pipeline chunks, embeds, and stores
-  it automatically after parsing.
-- **Ask** — retrieve top-k chunks for a question, then (if cloud is enabled) generate an answer.
+  it automatically after parsing. Re-uploading an already-indexed file is detected and skipped
+  (slice-2 A1, AC-1).
+- **Indexed documents** — the full corpus with per-document delete (with a lightweight confirm) and
+  chunk counts; delete is disabled while a job is in flight (slice-2 A2, AC-3/AC-4).
+- **Ask** — retrieve top-k chunks across the whole corpus for a question, attributed to their
+  source document, then (if cloud is enabled) generate an answer (slice-2 AC-5).
 - **Network & privacy** — the cloud opt-in toggle and the observable network log (FR-11, AC-8, §9).
-- **Measurements** — live cold/warm load, embedding throughput, retrieval latency (FR-10).
+- **Measurements** — live cold/warm load, embedding throughput, retrieval latency, index outcome,
+  and a persistence self-check, plus a "Copy as Markdown" export (slice-2 A4/B, AC-10/AC-11).
 - **Local activity** — plain-language local pipeline events (FR-12).
+- **Dev console** — in dev, leveled/namespaced pipeline traces (`[parse] [chunk] [embed] [db]
+[retrieve] [generate]`); document/prompt content only ever appears here, never in a production
+  build (slice-2 A3, AC-7/AC-8).
 
 ## Measuring a real run (manual)
 
@@ -53,10 +64,11 @@ copy `.env.local.example` to `.env.local`, fill in a real OpenAI-compatible endp
 ## Quality gate
 
 ```bash
-npm run format      # prettier --check
-npm run lint        # eslint
-npm run typecheck   # tsc --noEmit
-npm run test        # vitest run
+npm run format          # prettier --check
+npm run lint            # eslint
+npm run typecheck       # tsc --noEmit
+npm run test            # vitest run
+npm run check:prod-logs # real `vite build` + assert no content-logging path survives (AC-8)
 ```
 
 These are wired into the root `just check` gate (see the root `justfile`).
@@ -75,5 +87,10 @@ Installed dependency versions drifted from the plan's pins beyond a patch bump:
 - Gemma-4-E2B local generation is not implemented (D2) — dev-cloud is primary; local SmolLM2-360M
   generation is an unimplemented stretch goal (`generateLocal` reports a clear error).
 - No production app shell, Atomic Design UI, routing, or full Privacy Console organism.
-- Single document only; no hybrid BM25+vector search, citation UX, or Tiptap editor.
+- Multi-document corpus + delete are supported (slice 2); no hybrid BM25+vector search, citation
+  UX, or Tiptap editor.
 - Firefox/Safari and the WASM fallback path are observed-and-documented only, not gated (D6).
+- Dedup is byte-exact only — two files with identical extracted text but different raw bytes are
+  distinct documents, by design (slice-2 EC-7).
+- A pre-slice-2 local database is dropped and recreated (not migrated) on first open, with a
+  visible notice (slice-2 D5/EC-1/AC-9).

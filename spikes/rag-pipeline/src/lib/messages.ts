@@ -23,12 +23,25 @@ export type IndexStrategy = "hnsw" | "flat";
 
 export type ModelLoadKind = "cold" | "warm" | "already-loaded";
 
+/** Rendered document-list row (A2, FR-5, FR-6). */
+export interface DocumentSummary {
+  documentId: string;
+  title: string;
+  chunkCount: number;
+  sourceKind: "bundled" | "uploaded";
+  charLength: number;
+}
+
+/** Dedup decision surfaced on both `parse` (the real skip point, FR-3) and `ingest` (FR-11). */
+export type DedupOutcome = { skipped: false } | { skipped: true; existingDocumentId: string; existingTitle: string };
+
 export interface InitResult {
   webgpuAvailable: boolean;
   opfsAvailable: boolean;
   indexedDbAvailable: boolean;
-  restoredDocumentId: string | null;
-  restoredChunkCount: number;
+  restoredDocuments: DocumentSummary[]; // replaces restoredDocumentId (FR-9, AC-6)
+  restoredChunkCount: number; // total across the corpus (kept for existing UI text)
+  schemaReset: boolean; // D5/EC-1/AC-9 — DB was dropped/recreated on version bump
   modelLoadMs: number;
   modelLoadKind: ModelLoadKind;
   modelDevice: "webgpu" | "wasm";
@@ -41,6 +54,8 @@ export interface ParseResult {
   title: string;
   sourceKind: "bundled" | "uploaded";
   byteSize: number | null;
+  contentHash: string; // FR-1/FR-2 — threaded to ingest
+  dedup: DedupOutcome; // FR-3/FR-11 — skip short-circuit
 }
 
 export interface IngestResult {
@@ -50,6 +65,7 @@ export interface IngestResult {
   storeMs: number;
   chunksPerSecond: number;
   charsPerSecond: number;
+  dedup: DedupOutcome; // FR-11 — always { skipped: false } on a real ingest
 }
 
 export interface RetrieveResult {
@@ -65,7 +81,23 @@ export interface GenerateResult {
   source: "dev-cloud" | "local";
 }
 
-export type PipelineResult = InitResult | ParseResult | IngestResult | RetrieveResult | GenerateResult;
+export interface ListDocumentsResult {
+  documents: DocumentSummary[];
+}
+
+export interface DeleteDocumentResult {
+  documentId: string;
+  deletedChunkCount: number;
+}
+
+export type PipelineResult =
+  | InitResult
+  | ParseResult
+  | IngestResult
+  | RetrieveResult
+  | GenerateResult
+  | ListDocumentsResult
+  | DeleteDocumentResult;
 
 export type DocumentSource = { kind: "bundled" } | { kind: "file"; bytes: ArrayBuffer; name: string };
 
@@ -82,9 +114,13 @@ export type PipelineRequest =
       charLength: number;
       title: string;
       sourceKind: "bundled" | "uploaded";
+      contentHash: string;
+      byteSize: number | null;
     }
   | { type: "retrieve"; jobId: string; question: string; k: number }
   | { type: "restore"; jobId: string }
+  | { type: "listDocuments"; jobId: string }
+  | { type: "deleteDocument"; jobId: string; documentId: string }
   | { type: "generateLocal"; jobId: string; question: string; contexts: RetrievedChunk[] }
   | { type: "cancel"; jobId: string };
 

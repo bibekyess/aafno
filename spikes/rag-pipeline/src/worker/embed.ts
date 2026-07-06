@@ -7,6 +7,9 @@
 // `onnx-community/embeddinggemma-300m-ONNX`, q8 quantization (~155MB), output dimension 768.
 
 import { EMBEDDING_DIM } from "../lib/schema.sql";
+import { createLogger } from "../lib/log";
+
+const log = createLogger("embed");
 
 export const EMBEDDING_MODEL_ID = "onnx-community/embeddinggemma-300m-ONNX";
 
@@ -94,8 +97,8 @@ export async function loadEmbeddingModel(options: LoadEmbedModelOptions = {}): P
     // Documented observation for R2 rather than a hard failure — the schema's vector(768) column
     // would need correcting if this ever fires; slice 1 records the mismatch instead of silently
     // truncating/padding vectors.
-    console.warn(
-      `[embed] EmbeddingGemma reported dimension ${dimension}, pinned schema expects ${EMBEDDING_DIM}. ` +
+    log.warn(
+      `EmbeddingGemma reported dimension ${dimension}, pinned schema expects ${EMBEDDING_DIM}. ` +
         "Record this in MEASUREMENTS.md and correct lib/schema.sql.ts if this is reproducible.",
     );
   }

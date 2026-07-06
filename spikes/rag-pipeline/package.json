@@ -12,7 +12,8 @@
     "format:write": "prettier --write .",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "check:prod-logs": "node scripts/check-no-content-logs.mjs"
   },
   "dependencies": {
     "@chonkiejs/core": "^0.0.11",

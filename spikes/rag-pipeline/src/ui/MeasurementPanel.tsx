@@ -1,47 +1,71 @@
-// FR-10: live cold/warm load, embed throughput, retrieval latency — the on-screen half of the
-// measurement requirement. The committed half is MEASUREMENTS.md (AC-10), filled in manually from
-// these numbers after a real browser run.
+// A4/B: live cold/warm load, embed throughput, retrieval latency, index outcome, and the
+// persistence self-check — plus a one-click copyable Markdown export (D9, FR-20) matching
+// MEASUREMENTS.md's structure (AC-10). The committed half is MEASUREMENTS.md itself, filled in
+// manually from a real browser run by pasting this export (NFR "measurement numbers require a
+// real run").
 
-import type { IndexStrategy, ModelLoadKind } from "../lib/messages";
+import { useState } from "react";
+import { buildMeasurementMarkdown, type MeasurementSnapshot } from "../lib/measure";
 
 export interface MeasurementPanelProps {
-  modelLoadMs: number | null;
-  modelLoadKind: ModelLoadKind | null;
-  modelDevice: "webgpu" | "wasm" | null;
-  chunksPerSecond: number | null;
-  charsPerSecond: number | null;
-  indexStrategy: IndexStrategy | null;
-  retrievalMs: number | null;
+  snapshot: MeasurementSnapshot;
 }
 
-function fmt(value: number | null, digits = 1): string {
-  return value === null ? "—" : value.toFixed(digits);
+function fmtMs(value: number | null): string {
+  return value === null ? "—" : `${value.toFixed(0)}ms`;
 }
 
-export function MeasurementPanel(props: MeasurementPanelProps) {
-  const retrievalOk = props.retrievalMs === null || props.retrievalMs <= 500;
-  const warmOk = props.modelLoadKind !== "warm" || props.modelLoadMs === null || props.modelLoadMs <= 3000;
+export function MeasurementPanel({ snapshot }: MeasurementPanelProps) {
+  const [copied, setCopied] = useState(false);
+  const markdown = buildMeasurementMarkdown(snapshot);
+
+  const retrievalOk = snapshot.retrievalMs === null || snapshot.retrievalMs <= 500;
+  const warmOk = snapshot.modelLoadKind !== "warm" || snapshot.warmLoadMs === null || snapshot.warmLoadMs <= 3000;
+
+  const copyMarkdown = async () => {
+    try {
+      await navigator.clipboard.writeText(markdown);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard API can be unavailable/denied — the on-screen textarea below is the fallback (D9).
+    }
+  };
+
   return (
     <section aria-label="Measurements">
       <h2>Measurements</h2>
       <dl>
-        <dt>Model load</dt>
+        <dt>Cold load</dt>
+        <dd>{fmtMs(snapshot.coldLoadMs)}</dd>
+        <dt>Warm load</dt>
         <dd>
-          {fmt(props.modelLoadMs, 0)}ms ({props.modelLoadKind ?? "—"}, {props.modelDevice ?? "—"}){" "}
-          {props.modelLoadKind === "warm" && !warmOk ? "— missed ≤3s target" : ""}
+          {fmtMs(snapshot.warmLoadMs)} {snapshot.modelLoadKind === "warm" && !warmOk ? "— missed ≤3s target" : ""}
         </dd>
+        <dt>Model device</dt>
+        <dd>{snapshot.modelDevice ?? "—"}</dd>
         <dt>Embedding throughput</dt>
         <dd>
-          {fmt(props.chunksPerSecond, 2)} chunks/s, {fmt(props.charsPerSecond, 0)} chars/s
+          {snapshot.chunksPerSecond === null ? "—" : snapshot.chunksPerSecond.toFixed(2)} chunks/s,{" "}
+          {snapshot.charsPerSecond === null ? "—" : snapshot.charsPerSecond.toFixed(0)} chars/s
         </dd>
         <dt>Index strategy</dt>
-        <dd>{props.indexStrategy ?? "—"}</dd>
+        <dd>{snapshot.indexStrategy ?? "—"}</dd>
         <dt>Retrieval latency</dt>
         <dd>
-          {fmt(props.retrievalMs, 0)}ms {!retrievalOk ? "— missed ≤500ms target" : ""}
+          {fmtMs(snapshot.retrievalMs)} {!retrievalOk ? "— missed ≤500ms target" : ""}
         </dd>
+        <dt>Persistence self-check</dt>
+        <dd>{snapshot.persistenceSelfCheck}</dd>
       </dl>
-      <p>Copy these numbers into MEASUREMENTS.md after a run (AC-10).</p>
+      <button type="button" onClick={() => void copyMarkdown()}>
+        Copy as Markdown
+      </button>{" "}
+      {copied && <span role="status">Copied.</span>}
+      <p>
+        <label htmlFor="measurement-export">Export (paste into MEASUREMENTS.md, AC-10):</label>
+      </p>
+      <textarea id="measurement-export" readOnly value={markdown} rows={16} style={{ width: "100%" }} />
     </section>
   );
 }

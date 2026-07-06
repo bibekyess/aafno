@@ -11,7 +11,7 @@ default:
     @just --list
 
 # Run the whole gate.
-check: docs format lint typecheck test
+check: docs format lint typecheck test check-prod-logs
 
 # Repository documentation sanity checks.
 docs:
@@ -32,3 +32,8 @@ typecheck:
 # Run tests.
 test:
     cd {{spike_dir}} && npm run test
+
+# Production-build content-logging privacy gate (AC-8/EC-8, slice 2 A3): asserts no
+# document/prompt content-logging path survives a real `vite build`.
+check-prod-logs:
+    cd {{spike_dir}} && npm run check:prod-logs
