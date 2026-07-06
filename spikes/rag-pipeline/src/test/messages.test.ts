@@ -3,7 +3,13 @@
 // `postMessage` drift (§10 worker guidelines: typed request/response, no untyped messages).
 
 import { describe, expect, it } from "vitest";
-import { isPipelineEvent, isPipelineRequest, type PipelineEvent, type PipelineRequest } from "../lib/messages";
+import {
+  isPipelineEvent,
+  isPipelineRequest,
+  type ParseResult,
+  type PipelineEvent,
+  type PipelineRequest,
+} from "../lib/messages";
 
 describe("worker message contract", () => {
   it("type-guards recognize well-formed requests and events, and reject malformed values", () => {
@@ -42,7 +48,22 @@ describe("worker message contract", () => {
         case "parse":
           return { type: "progress", jobId: request.jobId, stage: "parse", note: `source: ${request.source.kind}` };
         case "ingest":
-          return { type: "progress", jobId: request.jobId, stage: "chunk", note: `doc: ${request.docId}` };
+          // `request.contentHash`/`request.byteSize` are only accessible because of narrowing —
+          // guards the slice-2 `ingest` contract extension (plan "Typed worker contract").
+          return {
+            type: "progress",
+            jobId: request.jobId,
+            stage: "chunk",
+            note: `doc: ${request.docId} hash: ${request.contentHash} bytes: ${request.byteSize}`,
+          };
+        case "listDocuments":
+          return { type: "result", jobId: request.jobId, result: { documents: [] } };
+        case "deleteDocument":
+          return {
+            type: "result",
+            jobId: request.jobId,
+            result: { documentId: request.documentId, deletedChunkCount: 0 },
+          };
         case "generateLocal":
           return {
             type: "progress",
@@ -60,5 +81,46 @@ describe("worker message contract", () => {
 
     const cancelEvent = handle({ type: "cancel", jobId: "xyz-789" });
     expect(cancelEvent).toEqual({ type: "status", jobId: "xyz-789", status: "cancelled" });
+
+    const listEvent = handle({ type: "listDocuments", jobId: "list-1" });
+    expect(listEvent).toEqual({ type: "result", jobId: "list-1", result: { documents: [] } });
+
+    const deleteEvent = handle({ type: "deleteDocument", jobId: "del-1", documentId: "doc-9" });
+    expect(deleteEvent).toEqual({
+      type: "result",
+      jobId: "del-1",
+      result: { documentId: "doc-9", deletedChunkCount: 0 },
+    });
+  });
+
+  it("narrows a dedup ParseResult on `dedup.skipped` (FR-3, FR-11)", () => {
+    const skippedResult: ParseResult = {
+      documentId: "doc-1",
+      text: "",
+      charLength: 0,
+      title: "Existing title",
+      sourceKind: "uploaded",
+      byteSize: 1024,
+      contentHash: "abc123",
+      dedup: { skipped: true, existingDocumentId: "doc-1", existingTitle: "Existing title" },
+    };
+    expect(skippedResult.dedup.skipped).toBe(true);
+    if (skippedResult.dedup.skipped) {
+      // Only accessible after narrowing on `skipped: true`.
+      expect(skippedResult.dedup.existingDocumentId).toBe("doc-1");
+      expect(skippedResult.dedup.existingTitle).toBe("Existing title");
+    }
+
+    const freshResult: ParseResult = {
+      documentId: "doc-2",
+      text: "some parsed text",
+      charLength: 16,
+      title: "New title",
+      sourceKind: "uploaded",
+      byteSize: 2048,
+      contentHash: "def456",
+      dedup: { skipped: false },
+    };
+    expect(freshResult.dedup.skipped).toBe(false);
   });
 });
