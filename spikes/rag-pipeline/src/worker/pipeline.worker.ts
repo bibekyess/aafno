@@ -59,6 +59,13 @@ function getEmbedModel(jobId: string): Promise<EmbedModelHandle> {
         // served from the OPFS/browser cache) — used as the cold-vs-warm heuristic below.
         if (info.status === "download" || info.status === "progress") {
           sawDownload = true;
+        }
+        // Record ONE network-log entry per file, at start ("download") and completion ("done") —
+        // never on "progress". transformers.js fires "progress" many times per second per file;
+        // emitting a network event on each tick appends a new row to the Privacy Console log and
+        // re-renders the panel continuously, pinning the main thread and freezing the tab. The
+        // progress bar below still updates every tick (single element, cheap).
+        if (info.status === "download" || info.status === "done") {
           post({
             type: "network",
             jobId,
@@ -67,13 +74,19 @@ function getEmbedModel(jobId: string): Promise<EmbedModelHandle> {
             note: `${info.file ?? EMBEDDING_MODEL_ID}: ${info.status}${info.progress !== undefined ? ` ${info.progress.toFixed(0)}%` : ""}`,
           });
         }
-        post({
-          type: "progress",
-          jobId,
-          stage: "init",
-          pct: info.progress,
-          note: `Loading embedding model: ${info.status}`,
-        });
+        // The Activity Log records plain-language milestones (FR-12), not per-byte ticks.
+        // transformers.js fires "progress"/"progress_total" many times per second while a file
+        // downloads; forwarding each as an activity entry floods the log. Emit only lifecycle
+        // milestones (initiate/download/done/ready); the noisy tick statuses are dropped.
+        if (info.status !== "progress" && info.status !== "progress_total") {
+          post({
+            type: "progress",
+            jobId,
+            stage: "init",
+            pct: info.progress,
+            note: `Loading embedding model: ${info.status}`,
+          });
+        }
       },
     }).then((model) => {
       // Recorded for MEASUREMENTS.md (AC-5/AC-6): whether this init actually downloaded bytes.
@@ -198,7 +211,16 @@ async function handleIngest(
   const model = await getEmbedModel(jobId);
   post({ type: "progress", jobId, stage: "embed", note: `Generating embeddings on this device (${model.device})` });
   const embedStopwatch = new Stopwatch();
-  const vectors = await model.embed(chunks.map((chunk) => chunk.text));
+  const vectors = await model.embed(
+    chunks.map((chunk) => chunk.text),
+    {
+      // One progress note per batch (not per chunk) — bounded to a handful of entries even for
+      // large documents, so it informs without flooding the Activity Log.
+      onBatch: (done, total) => {
+        post({ type: "progress", jobId, stage: "embed", note: `Embedded ${done}/${total} chunks` });
+      },
+    },
+  );
   const embedMs = embedStopwatch.elapsedMs();
   const throughput = embeddingThroughput(chunks.length, charLength, embedMs);
   post({
