@@ -1,13 +1,10 @@
-// Local chunk (FR-3). Uses `@chonkiejs/core`'s RecursiveChunker configured with the EmbeddingGemma
-// tokenizer via `@chonkiejs/token` (research finding, plan §"New dependencies": chonkie-ts accepts
-// the HuggingFace tokenizer for token-accurate sizing — no approximation fallback needed for R1).
-//
-// We deliberately do NOT statically import `@chonkiejs/token` here: `@chonkiejs/core`'s
-// `Tokenizer.create(modelName)` dynamically `import()`s it internally only when a non-"character"
-// tokenizer name is requested (see its README "How It Works"), and wraps that in a try/catch that
-// raises a clear, catchable error if the package isn't usable. A static import would force every
-// bundler (and this spike's own dependency resolution) to resolve `@chonkiejs/token` eagerly even
-// when the character-based fallback below ends up being used.
+// Local chunk (FR-3). Uses `@chonkiejs/core`'s RecursiveChunker. We request the EmbeddingGemma
+// tokenizer for token-accurate sizing, but `@chonkiejs/token` (which supplies HuggingFace
+// tokenizers) ships no usable build, so `@chonkiejs/core` falls back to its built-in character
+// tokenizer — the documented approximation FR-3 allows for R1 (see the `.catch` below and §5
+// unknown #2). `@chonkiejs/token` is aliased to a throwing stub at resolve time so the dynamic
+// `import()` inside `@chonkiejs/core` resolves cleanly on every bundler version rather than failing
+// build-time import analysis (vite.config.ts + src/shims/chonkiejs-token-shim.ts).
 
 import { RecursiveChunker } from "@chonkiejs/core";
 

@@ -4,14 +4,6 @@ import react from "@vitejs/plugin-react";
 
 // Spike harness (spikes/rag-pipeline) — see PROJECT_ANALYSIS.md §10 #5: spike code is typed
 // but not production-polished. No production app shell is scaffolded here (Phase 1 concern).
-// `@chonkiejs/token` is an OPTIONAL peer of `@chonkiejs/core` (dynamically `import()`-ed only when
-// a non-"character" tokenizer name is requested, and wrapped in a try/catch there — see
-// worker/chunk.ts). As published, this package ships no `dist/` output at all, so any bundler that
-// tries to eagerly resolve it fails the whole build even though the code path that references it
-// is designed to degrade gracefully at runtime. Marking it external keeps that dynamic import
-// unresolved at build time, exactly matching how it already behaves at runtime in this environment
-// (worker/chunk.ts's fallback to character-based chunking, exercised by test/chunk.test.ts).
-const EXTERNALIZE_BROKEN_OPTIONAL_DEPS = ["@chonkiejs/token"];
 
 export default defineConfig({
   plugins: [react()],
@@ -20,28 +12,21 @@ export default defineConfig({
       // See src/shims/node-crypto-shim.ts: only needed to satisfy @chonkiejs/core's dead-code
       // handshake imports, never actually invoked.
       "node:crypto": fileURLToPath(new URL("./src/shims/node-crypto-shim.ts", import.meta.url)),
+      // `@chonkiejs/core` dynamically `import()`s `@chonkiejs/token` for non-"character" tokenizers,
+      // but that package ships no `dist/` so the specifier is unresolvable — failing Vite's eager
+      // import-analysis on any version. Aliasing it to a local stub makes the import always resolve;
+      // the stub throws, which @chonkiejs/core catches to fall back to its character tokenizer
+      // (worker/chunk.ts, exercised by test/chunk.test.ts). See src/shims/chonkiejs-token-shim.ts.
+      "@chonkiejs/token": fileURLToPath(new URL("./src/shims/chonkiejs-token-shim.ts", import.meta.url)),
     },
   },
   optimizeDeps: {
     // PGlite and transformers.js ship their own WASM/worker assets; let them load natively
     // instead of being pre-bundled, which can break their internal asset resolution.
-    exclude: [
-      "@electric-sql/pglite",
-      "@electric-sql/pglite-pgvector",
-      "@huggingface/transformers",
-      ...EXTERNALIZE_BROKEN_OPTIONAL_DEPS,
-    ],
-  },
-  build: {
-    rollupOptions: {
-      external: EXTERNALIZE_BROKEN_OPTIONAL_DEPS,
-    },
+    exclude: ["@electric-sql/pglite", "@electric-sql/pglite-pgvector", "@huggingface/transformers"],
   },
   worker: {
     format: "es",
-    rollupOptions: {
-      external: EXTERNALIZE_BROKEN_OPTIONAL_DEPS,
-    },
   },
   define: {
     // Build-time seam for ADR #4 (dev-cloud compile-time exclusion): the dev-cloud generation
